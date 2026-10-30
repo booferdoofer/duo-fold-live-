@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -25,10 +25,14 @@ jobs:
           sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;35.0.0'
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
           chmod +x gradlew
-      - name: Unit tests
-        run: ./gradlew --no-daemon testGithubDebugUnitTest
       - name: Build debug APK
-        run: ./gradlew --no-daemon assembleGithubDebug
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon assembleGithubDebug 2>&1 | tee build.log
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon testGithubDebugUnitTest 2>&1 | tee -a build.log
       - name: Publish test release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,3 +44,13 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Test build: fade + unlock flash fix ($short)" \
             --notes "Unofficial debug build of the fix/fade-and-unlock-flash branch. Debug-signed: uninstall the official Duo Fold Live first (its settings will reset), then install this APK. Reinstall the official release to go back."
+      - name: Publish failure log
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short="${GITHUB_SHA::7}"
+          touch build.log
+          grep -E "^e: |error:|FAILED|What went wrong|\.kt:|\.java:" -A3 build.log | head -300 > errors.txt || true
+          tail -150 build.log >> errors.txt
+          gh release create "log-$short-$GITHUB_RUN_ATTEMPT" errors.txt build.log --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Build log (failed) $short" --notes "Failure log for debugging."
