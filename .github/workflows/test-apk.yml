@@ -18,22 +18,24 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
-      - uses: android-actions/setup-android@v3
-      - name: Install SDK packages
-        run: |
-          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;35.0.0'
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
-          chmod +x gradlew
-      - name: Build debug APK
+      - uses: android-actions/setup-android@v4
+      - name: Build and test
+        id: build
         run: |
           set -o pipefail
-          ./gradlew --no-daemon assembleGithubDebug 2>&1 | tee build.log
-      - name: Unit tests
-        run: |
-          set -o pipefail
-          ./gradlew --no-daemon testGithubDebugUnitTest 2>&1 | tee -a build.log
-      - name: Publish test release
+          {
+            echo "== SDK"; which sdkmanager || ls "$ANDROID_HOME" || true
+            yes | sdkmanager --licenses > /dev/null || true
+            sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;35.0.0'
+            printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+            chmod +x gradlew
+            echo "== Build"
+            ./gradlew --no-daemon assembleGithubDebug
+            echo "== Tests"
+            ./gradlew --no-daemon testGithubDebugUnitTest
+          } 2>&1 | tee build.log
+      - name: Publish APK
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -44,13 +46,12 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Test build: fade + unlock flash fix ($short)" \
             --notes "Unofficial debug build of the fix/fade-and-unlock-flash branch. Debug-signed: uninstall the official Duo Fold Live first (its settings will reset), then install this APK. Reinstall the official release to go back."
-      - name: Publish failure log
-        if: failure()
+      - name: Publish log
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           short="${GITHUB_SHA::7}"
           touch build.log
-          grep -E "^e: |error:|FAILED|What went wrong|\.kt:|\.java:" -A3 build.log | head -300 > errors.txt || true
-          tail -150 build.log >> errors.txt
-          gh release create "log-$short-$GITHUB_RUN_ATTEMPT" errors.txt build.log --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Build log (failed) $short" --notes "Failure log for debugging."
+          { grep -nE "^e: |error:|FAILED|What went wrong|Exception" -A4 build.log | head -300; echo "== TAIL"; tail -200 build.log; } > errors.txt || true
+          gh release create "log-$short-$GITHUB_RUN_ATTEMPT" errors.txt build.log --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Build log $short (${{ steps.build.outcome }})" --notes "Build log for debugging."
