@@ -21,18 +21,14 @@ final class HandoffFade {
  private final int[] radii={-1,-1};
  private volatile float frost=FrostPolicy.DEFAULT;
  private Method blurRadius;private boolean blurBroken;
- private Boolean blurAllowed;private long blurCheckedAt;
  void frost(float value){frost=FrostPolicy.strength(value);}
- /** System blur can be off (battery saver, accessibility); then frost falls back to black. */
- private float effectiveFrost(long now){
-  if(frost<=0||blurBroken)return 0;
-  if(blurAllowed==null||now-blurCheckedAt>1000){
-   blurCheckedAt=now;
-   try{Class<?> c=Class.forName("android.view.CrossWindowBlurListeners");Object l=c.getMethod("getInstance").invoke(null);blurAllowed=(Boolean)c.getMethod("isCrossWindowBlurEnabled").invoke(l);}
-   catch(Throwable e){blurAllowed=Boolean.TRUE;}
-  }
-  return blurAllowed?frost:0;
- }
+ /**
+  * Frost is applied whenever requested. An earlier gate on
+  * CrossWindowBlurListeners reported blur as off in this helper process even
+  * though compositor blur works on the device, so frost never appeared.
+  * If setting the blur fails, blurBroken falls back to the black fade.
+  */
+ private float effectiveFrost(long now){return frost<=0||blurBroken?0:frost;}
  /** Apply fade opacity a to display slot i: black dim plus optional frost blur. */
  private void paint(SurfaceControl.Transaction t,int i,float a,float f){
   float dim=FrostPolicy.dim(a,f);
@@ -180,7 +176,7 @@ final class HandoffFade {
     }
     if(changed)t.apply();
    }
-   if(now>=statusAt){statusAt=now+250;status="Handoff fade: "+Math.round(alpha*100)+"%; frost="+Math.round(f*100)+"%"+(frost>0&&f==0?" (system blur off)":"")+"; primary="+(inner?"inner":"cover")+"; "+(policy.transitioning()?"destination black/reveal":"angle fade")+"; "+policy.readiness+"; glass commit settle 2 ms; legacy ON settle 32 ms; reveal "+FadeSettings.reveal(gradualness)+" ms";}
+   if(now>=statusAt){statusAt=now+250;status="Handoff fade: "+Math.round(alpha*100)+"%; frost="+Math.round(f*100)+"%"+(blurBroken?" (blur failed; black used)":"")+"; frost radius="+radii[0]+"/"+radii[1]+"; primary="+(inner?"inner":"cover")+"; "+(policy.transitioning()?"destination black/reveal":"angle fade")+"; "+policy.readiness+"; last reveal: "+policy.lastReveal+"; glass commit settle 2 ms; legacy ON settle 32 ms; reveal "+FadeSettings.reveal(gradualness)+" ms";}
    schedule(animating);
   }catch(Exception e){clear();status="Handoff fade unavailable: "+e.getClass().getSimpleName()+": "+e.getMessage();}
  }};
@@ -190,7 +186,7 @@ final class HandoffFade {
   for(int i=0;i<layers.length;i++)if(layers[i]!=null){try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){t.setVisibility(layers[i],false).reparent(layers[i],null).apply();}catch(Exception ignored){}layers[i].release();layers[i]=null;}
   for(int i=0;i<frostLayers.length;i++)if(frostLayers[i]!=null){try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){t.setVisibility(frostLayers[i],false).reparent(frostLayers[i],null).apply();}catch(Exception ignored){}frostLayers[i].release();frostLayers[i]=null;}
   java.util.Arrays.fill(radii,-1);
-  status="Handoff fade idle";
+  status="Handoff fade idle; last reveal: "+policy.lastReveal;
  }
  void close(){closed=true;handler.post(()->{clear();thread.quitSafely();});}
 }
