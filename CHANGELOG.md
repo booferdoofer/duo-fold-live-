@@ -4,6 +4,7 @@
 - The "no switch arrived" 1.2 s black hold now eases out instead of popping to 0.
 - Active fade ramps use a 16 ms fallback tick instead of 80 ms, so a stalled VSYNC around the panel switch can no longer drop the reveal to ~12 fps.
 - Reduce unlock wallpaper flashes: a Home sample up to 4 s before SCREEN_OFF (was 1.5 s) now qualifies for the wake bridge. Sampling cadence plus late SCREEN_OFF delivery could exceed 1.5 s, so no bridge was prepared.
+- New optional **Frosted handoff** slider (Advanced, under the black fade controls; default 0% = unchanged black fade). Blurs and dims the screen around the display switch instead of going fully black, then defrosts into the new screen. Uses system compositor blur on a colorless layer below the fade; falls back to black when system blur is off.
 - Samsung's physical display-switch blackout itself is unchanged; these fixes make the fade that covers it more reliable.
 
 # 3.5.4 — Cover-close continuity and motion presets

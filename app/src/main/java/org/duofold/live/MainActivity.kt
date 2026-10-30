@@ -96,6 +96,7 @@ class MainActivity:ComponentActivity(){
     var fadeSmoothing by remember{mutableFloatStateOf(FadeSettings.smoothing(prefs.getFloat("fade_smoothing_ms",FadeSettings.DEFAULT_SMOOTHING)))}
     var handoffAngle by remember{mutableFloatStateOf(HandoffSettings.angle(prefs.getFloat("handoff_angle",HandoffSettings.DEFAULT)))}
     var fadeGradualness by remember{mutableFloatStateOf(FadeSettings.gradualness(prefs.getFloat("fade_gradualness",FadeSettings.DEFAULT_GRADUALNESS)))}
+    var handoffFrost by remember{mutableFloatStateOf(FrostPolicy.strength(prefs.getFloat("handoff_frost",FrostPolicy.DEFAULT)))}
     var fullResolution by remember{mutableStateOf(prefs.getBoolean("full_resolution_glass",false))}
     var antialias by remember{mutableStateOf(prefs.getBoolean("antialias_enabled",true))}
     var earlyStretch by remember{mutableFloatStateOf(prefs.getFloat("early_stretch",2.7f).let{if(it.isFinite())it.coerceIn(0f,3f)/3f else .9f})}
@@ -310,7 +311,10 @@ class MainActivity:ComponentActivity(){
        InfoLabel("Black fade gradualness · ${(fadeGradualness*100).roundToInt()}%","0% gives a sharp fade. Higher values fade earlier and reveal the new screen more slowly.")
        Slider(value=fadeGradualness,onValueChange={fadeGradualness=it},valueRange=0f..1f,onValueChangeFinished={prefs.edit().putFloat("fade_gradualness",fadeGradualness).apply()})
 
-       TextButton(onClick={fadeSmoothing=FadeSettings.DEFAULT_SMOOTHING;fadeGradualness=FadeSettings.DEFAULT_GRADUALNESS;prefs.edit().putFloat("fade_smoothing_ms",fadeSmoothing).putFloat("fade_gradualness",fadeGradualness).apply()}){Text("Reset black fade")}
+       InfoLabel("Frosted handoff · ${(handoffFrost*100).roundToInt()}%","Blurs the screen instead of fading fully to black around the display switch, then defrosts into the new screen. 0% keeps the plain black fade. Samsung's brief switch blackout still occurs. Uses system blur; if blur is off (e.g. battery saver), the black fade is used.")
+       Slider(value=handoffFrost,onValueChange={handoffFrost=it},valueRange=0f..1f,onValueChangeFinished={prefs.edit().putFloat("handoff_frost",handoffFrost).apply()})
+
+       TextButton(onClick={fadeSmoothing=FadeSettings.DEFAULT_SMOOTHING;fadeGradualness=FadeSettings.DEFAULT_GRADUALNESS;handoffFrost=FrostPolicy.DEFAULT;prefs.edit().putFloat("fade_smoothing_ms",fadeSmoothing).putFloat("fade_gradualness",fadeGradualness).putFloat("handoff_frost",handoffFrost).apply()}){Text("Reset black fade")}
         HorizontalDivider()
 
         InfoLabel("Screen placement","V2 starts stretching earlier without the inward squeeze. Original remains available for comparison. Applies in both fold directions.")

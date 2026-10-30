@@ -15,6 +15,43 @@ final class HandoffFade {
  private volatile long mirrorSubmitted=-1;
  void mirrorSubmitted(){mirrorSubmitted=SystemClock.elapsedRealtime();}
  private final SurfaceControl[] layers=new SurfaceControl[2];
+ // Optional frost: a colorless effect layer just below each black layer that
+ // blurs what is behind it. Only ever present when frost > 0.
+ private final SurfaceControl[] frostLayers=new SurfaceControl[2];
+ private final int[] radii={-1,-1};
+ private volatile float frost=FrostPolicy.DEFAULT;
+ private Method blurRadius;private boolean blurBroken;
+ private Boolean blurAllowed;private long blurCheckedAt;
+ void frost(float value){frost=FrostPolicy.strength(value);}
+ /** System blur can be off (battery saver, accessibility); then frost falls back to black. */
+ private float effectiveFrost(long now){
+  if(frost<=0||blurBroken)return 0;
+  if(blurAllowed==null||now-blurCheckedAt>1000){
+   blurCheckedAt=now;
+   try{Class<?> c=Class.forName("android.view.CrossWindowBlurListeners");Object l=c.getMethod("getInstance").invoke(null);blurAllowed=(Boolean)c.getMethod("isCrossWindowBlurEnabled").invoke(l);}
+   catch(Throwable e){blurAllowed=Boolean.TRUE;}
+  }
+  return blurAllowed?frost:0;
+ }
+ /** Apply fade opacity a to display slot i: black dim plus optional frost blur. */
+ private void paint(SurfaceControl.Transaction t,int i,float a,float f){
+  float dim=FrostPolicy.dim(a,f);
+  t.setAlpha(layers[i],dim).setVisibility(layers[i],dim>0);alphas[i]=a;
+  int r=FrostPolicy.radius(a,f);
+  if(r>0&&frostLayers[i]==null&&!blurBroken)try{
+   SurfaceControl.Builder b=new SurfaceControl.Builder().setName("Duo handoff frost "+i).setHidden(true);
+   try{SurfaceControl.Builder.class.getMethod("setEffectLayer").invoke(b);}catch(NoSuchMethodException e){colorLayer.invoke(b);}
+   frostLayers[i]=b.build();radii[i]=-1;
+   SurfaceControl.Transaction.class.getMethod("setSkipScreenshot",SurfaceControl.class,boolean.class).invoke(t,frostLayers[i],true);
+   t.setLayer(frostLayers[i],Integer.MAX_VALUE-6);
+   if(stacks[i]>=0)stack.invoke(t,frostLayers[i],stacks[i]);
+   if(extents[i]>0)crop.invoke(t,frostLayers[i],extents[i],extents[i]);
+  }catch(Throwable e){blurBroken=true;status="Frost unavailable: "+e.getClass().getSimpleName()+"; black fade used";}
+  if(frostLayers[i]!=null&&radii[i]!=r)try{
+   if(blurRadius==null)blurRadius=SurfaceControl.Transaction.class.getMethod("setBackgroundBlurRadius",SurfaceControl.class,int.class);
+   blurRadius.invoke(t,frostLayers[i],r);t.setVisibility(frostLayers[i],r>0);radii[i]=r;
+  }catch(Throwable e){blurBroken=true;t.setVisibility(frostLayers[i],false);radii[i]=0;}
+ }
  private volatile boolean enabled,closed,requireInnerGlass;
  private volatile float openThreshold=172,handoffAngle=HandoffSettings.DEFAULT;
  private static final class Draw {
@@ -54,7 +91,7 @@ final class HandoffFade {
   float k=HandoffFadePolicy.releaseEnvelope(now-releaseStart,gradualness);
   if(k<=0){clear();return;}
   try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){
-   for(int i=0;i<2;i++)if(layers[i]!=null){float a=releaseFrom[i]*k;t.setAlpha(layers[i],a).setVisibility(layers[i],a>0);alphas[i]=a;}
+   float f=effectiveFrost(now);for(int i=0;i<2;i++)if(layers[i]!=null)paint(t,i,releaseFrom[i]*k,f);
    t.apply();
   }
   status="Handoff fade releasing ("+reason+"): "+Math.round(k*100)+"%";
@@ -102,7 +139,7 @@ final class HandoffFade {
    if(p==null){
     if(now-lastPrimary>500){release(now,"primary display unavailable");return;}
     try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){
-     for(int i=0;i<2;i++)if(layers[i]!=null){t.setAlpha(layers[i],1f).setVisibility(layers[i],true);alphas[i]=1f;}
+     float f=effectiveFrost(now);for(int i=0;i<2;i++)if(layers[i]!=null)paint(t,i,1f,f);
      t.apply();
     }
     releaseStart=-1;schedule();return;
@@ -121,13 +158,14 @@ final class HandoffFade {
    boolean secondaryInner=secondary!=null&&Math.min(value(secondary,"logicalWidth"),value(secondary,"logicalHeight"))/(float)Math.max(value(secondary,"logicalWidth"),value(secondary,"logicalHeight"))>.7f;
    float mirrorAlpha=closingMirror.opacity(now,inner,secondaryInner&&value(secondary,"state")==2,mirrorSubmitted,gradualness);
    boolean animating=policy.transitioning()&&value(p,"state")==2;
+   float f=effectiveFrost(now);
    try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){
     boolean changed=false;
     for(int i=0;i<2;i++){
      Object d=i==0?p:secondary;
      float layerAlpha=i==1&&!inner?Math.max(alpha,mirrorAlpha):alpha;
      if(layerAlpha>0&&layerAlpha<1)animating=true;
-     if(d==null){if(layers[i]!=null&&alphas[i]!=layerAlpha){t.setAlpha(layers[i],layerAlpha).setVisibility(layers[i],layerAlpha>0);alphas[i]=layerAlpha;changed=true;}continue;}
+     if(d==null){if(layers[i]!=null&&(alphas[i]!=layerAlpha||radii[i]!=FrostPolicy.radius(layerAlpha,f)&&(f>0||frostLayers[i]!=null))){paint(t,i,layerAlpha,f);changed=true;}continue;}
      if(layers[i]==null){
       SurfaceControl.Builder builder=new SurfaceControl.Builder().setName("Duo handoff black fade "+i).setHidden(true);
       colorLayer.invoke(builder);layers[i]=builder.build();changed=true;
@@ -135,14 +173,14 @@ final class HandoffFade {
       color.invoke(t,layers[i],new float[]{0,0,0});t.setLayer(layers[i],Integer.MAX_VALUE-5);
      }
      int targetStack=value(d,"layerStack");
-     if(stacks[i]!=targetStack){stack.invoke(t,layers[i],targetStack);stacks[i]=targetStack;changed=true;}
+     if(stacks[i]!=targetStack){stack.invoke(t,layers[i],targetStack);if(frostLayers[i]!=null)stack.invoke(t,frostLayers[i],targetStack);stacks[i]=targetStack;changed=true;}
      int extent=Math.max(2448,Math.max(value(d,"logicalWidth"),value(d,"logicalHeight")));
-     if(extents[i]!=extent){crop.invoke(t,layers[i],extent,extent);extents[i]=extent;changed=true;}
-     if(alphas[i]!=layerAlpha){t.setAlpha(layers[i],layerAlpha).setVisibility(layers[i],layerAlpha>0);alphas[i]=layerAlpha;changed=true;}
+     if(extents[i]!=extent){crop.invoke(t,layers[i],extent,extent);if(frostLayers[i]!=null)crop.invoke(t,frostLayers[i],extent,extent);extents[i]=extent;changed=true;}
+     if(alphas[i]!=layerAlpha||radii[i]!=FrostPolicy.radius(layerAlpha,f)&&(f>0||frostLayers[i]!=null)){paint(t,i,layerAlpha,f);changed=true;}
     }
     if(changed)t.apply();
    }
-   if(now>=statusAt){statusAt=now+250;status="Handoff fade: "+Math.round(alpha*100)+"%; primary="+(inner?"inner":"cover")+"; "+(policy.transitioning()?"destination black/reveal":"angle fade")+"; "+policy.readiness+"; glass commit settle 2 ms; legacy ON settle 32 ms; reveal "+FadeSettings.reveal(gradualness)+" ms";}
+   if(now>=statusAt){statusAt=now+250;status="Handoff fade: "+Math.round(alpha*100)+"%; frost="+Math.round(f*100)+"%"+(frost>0&&f==0?" (system blur off)":"")+"; primary="+(inner?"inner":"cover")+"; "+(policy.transitioning()?"destination black/reveal":"angle fade")+"; "+policy.readiness+"; glass commit settle 2 ms; legacy ON settle 32 ms; reveal "+FadeSettings.reveal(gradualness)+" ms";}
    schedule(animating);
   }catch(Exception e){clear();status="Handoff fade unavailable: "+e.getClass().getSimpleName()+": "+e.getMessage();}
  }};
@@ -150,6 +188,8 @@ final class HandoffFade {
   handler.removeCallbacks(readinessTick);handler.removeCallbacks(tick);if(frames!=null)frames.removeFrameCallback(frame);
   java.util.Arrays.fill(alphas,-1);java.util.Arrays.fill(stacks,-1);java.util.Arrays.fill(extents,-1);ticking=false;releaseStart=-1;policy.reset();closingMirror.reset();mirrorSubmitted=-1;
   for(int i=0;i<layers.length;i++)if(layers[i]!=null){try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){t.setVisibility(layers[i],false).reparent(layers[i],null).apply();}catch(Exception ignored){}layers[i].release();layers[i]=null;}
+  for(int i=0;i<frostLayers.length;i++)if(frostLayers[i]!=null){try(SurfaceControl.Transaction t=new SurfaceControl.Transaction()){t.setVisibility(frostLayers[i],false).reparent(frostLayers[i],null).apply();}catch(Exception ignored){}frostLayers[i].release();frostLayers[i]=null;}
+  java.util.Arrays.fill(radii,-1);
   status="Handoff fade idle";
  }
  void close(){closed=true;handler.post(()->{clear();thread.quitSafely();});}

@@ -58,6 +58,7 @@ public class AngleReader extends Binder {
    concurrent.closingAppReturnEnabled(data.dataAvail()>=4&&data.readInt()!=0);
    boolean jitterProtection=data.dataAvail()<4||data.readInt()!=0;
    String behavior=AnimationModePolicy.initialBehavior(data.dataAvail()>0?data.readString():null,mode);
+   float frostStrength=FrostPolicy.strength(data.dataAvail()>=4?data.readFloat():FrostPolicy.DEFAULT);
    float effectiveAngle=closedHingeGate.filter(angle,closedThreshold,jitterProtection,last>0&&heartbeat-last<750);
    closureState.sample(angle,effectiveAngle,last>0&&heartbeat-last<750,dual,unlocked);
    boolean effectAllowed=animationMode.update(behavior,effectiveAngle,last>0&&heartbeat-last<750);
@@ -67,7 +68,7 @@ public class AngleReader extends Binder {
    rotation.screenshotRelease(dual&&screenshotStartup);
    rotation.update(appEnabled&&unlocked,last>0&&heartbeat-last<750,effectiveAngle,openThreshold);
    if(fade==null)fade=new HandoffFade();
-   fade.settings(fadeSmoothing,fadeGradualness,mirrorMode&&!debug,openThreshold,handoffAngle);
+   fade.settings(fadeSmoothing,fadeGradualness,mirrorMode&&!debug,openThreshold,handoffAngle);fade.frost(frostStrength);
    fade.update(!HandoffBaseline.ENABLED&&live&&!dual&&appEnabled&&!handoff.probeHolding(),effectiveAngle,last>0&&heartbeat-last<750);
    if(expansion!=null){expansion.motion(effectiveAngle,openThreshold);expansion.enabled(!HandoffBaseline.ENABLED&&mirrorMode&&live&&!dual&&appEnabled&&!handoff.probeHolding());}
    boolean bridgeReady=true;
